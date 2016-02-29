@@ -1,0 +1,111 @@
+from scrapy.spiders import Spider
+from scrapy.selector import Selector
+from scrapy.crawler import CrawlerRunner
+from scrapy.utils.log import configure_logging
+from twisted.internet import reactor
+from scrapy.spiders import Request
+import os
+import subprocess
+
+from wordcloud import WordCloud
+from wordcloud import STOPWORDS
+from PIL import Image
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+class MySpider(Spider):
+    name = "craig"
+    allowed_domains = ["americanrhetoric.com"]
+    start_urls = ["http://www.americanrhetoric.com/barackobamaspeeches.htm"]
+
+    def parse(self, response):
+        pdf_list = []
+        hxs = Selector(response)
+        titles = hxs.xpath("//*[@id=\"AutoNumber1\"]")
+        i = 3
+        while i < 356:
+            link = titles.xpath("//tr[" + str(i) + "]/td[4]/font/a/@href").extract()
+            link2 = titles.xpath("//tr[" + str(i) + "]/td[4]/font/font/a/@href").extract()
+
+            if not not link:
+                pdf_list.append(link[0])
+            if not not link2:
+                pdf_list.append(link2[0])
+            i += 1
+        abs_links = ['http://www.americanrhetoric.com/' + x for x in pdf_list]
+
+        for link in abs_links:
+            request = Request(link, callback=self.parse_urls)
+            yield request
+
+    def parse_urls(self, response):
+        with open("temp.pdf", "w") as f:
+            f.write(response.body)
+
+        subprocess.call(['/usr/local/bin/pdftotext', 'temp.pdf', 'temp.txt'])
+        os.remove("temp.pdf")
+
+        if not os.path.isfile("temp.txt"):
+            return
+
+        with open('temp.txt', 'r') as fin:
+            data = fin.read().splitlines(True)
+        with open('temp.txt', 'w') as fout:
+            fout.writelines(data[7:])
+
+        delete_list = ["AmericanRhetoric.com", "Page", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+                       "Property of  Copyright (c)0. All rights reserved.",
+                       "Transcription by Michael E. Eidenmuller. Property of   Copyright (c)00. All rights reserved.",
+                       "0", "President Obama:", "Property of  Copyright (c). All rights reserved.",
+                       "Property of  Copyright", "All rights reserved.", "Property of   Copyright",
+                       "Transcription by Michael E. Eidenmuller.  Property of AmericanR hetoric.com.",
+                       "Copyright", "Transcription date  by Michael E. Eidenmuller. Copyright Status: Property of",
+                       "AUTHENTICITY CERTIFIED: Text version below transcribed directly from audio and edited for"
+                       " continuity", "Property of", "Transcription by Michael E. Eidenmuller.",
+                       "Status: Restricted, seek permission.", "Transcription date  by Michael E. Eidenmuller.",
+                       "Status: Unknown", "Status: Restrictions unknown.", "Status:",
+                       "AUTHENTICITY CERTIFIED: Text version below transcribed directly from audio and edited for "
+                       "continuity"]
+        fin = open("temp.txt")
+
+        if not os.path.isfile("temp_2.txt"):
+            open("temp_2.txt", "w+")
+
+        fout = open("temp_2.txt", "a+")
+        for line in fin:
+            for word in delete_list:
+                line = line.replace(word, "")
+            fout.write(line)
+        fin.close()
+        fout.close()
+
+        os.remove("temp.txt")
+
+spid = MySpider()
+
+configure_logging()
+runner = CrawlerRunner()
+d = runner.crawl(MySpider)
+d.addBoth(lambda _: reactor.stop())
+reactor.run()
+
+cs = ""
+with open('temp_2.txt', 'r') as fin:
+    for line in fin:
+        cs += line
+
+os.remove("temp_2.txt")
+
+img = Image.open("obama.png")
+img = img.resize((1200, 1772), Image.ANTIALIAS)
+hcmask = np.array(img)
+wc = WordCloud(background_color="white", max_words=2000, mask=hcmask, stopwords=STOPWORDS)
+wc.generate(cs)
+wc.to_file("obama_words.png")
+plt.imshow(wc)
+plt.axis("off")
+plt.figure()
+plt.imshow(hcmask, cmap=plt.cm.gray)
+plt.axis("off")
+plt.show()
